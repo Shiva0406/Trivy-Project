@@ -1,0 +1,545 @@
+# 🛡️ Trivy DevSecOps Security Scanning Project
+
+An end-to-end, beginner-friendly **DevSecOps project using Aqua Security Trivy**. This project demonstrates how to scan application source code, dependencies, Docker images, Terraform files, and Kubernetes manifests for security issues — locally and automatically through GitHub Actions.
+
+> **Training-lab notice:** The files under `examples/insecure/` intentionally contain insecure settings so Trivy can detect and report them. They are for scanning demonstrations only. Never apply or deploy these examples to a real AWS account or production Kubernetes cluster.
+
+---
+
+## 📌 1. Project Objectives
+
+The objective is to integrate security scanning into the software development and deployment lifecycle (Shift Left Security).
+
+By completing this project, you will learn to:
+
+- Scan Docker images for OS and application dependency vulnerabilities.
+- Scan source files and dependencies for vulnerabilities and exposed secrets.
+- Identify misconfigurations in Terraform and Kubernetes YAML.
+- Generate security reports in JSON and SARIF formats.
+- Generate a CycloneDX Software Bill of Materials (SBOM).
+- Automate security scans using GitHub Actions.
+- Configure a security gate that can fail a pipeline when serious vulnerabilities are detected.
+
+## 🏗️ 2. Project Architecture
+
+```text
+                  DEVELOPER
+                      |
+                      | git push / pull request
+                      v
+              +-------------------+
+              |   GitHub Repo     |
+              | App + Dockerfile  |
+              | Terraform + K8s   |
+              +-------------------+
+                      |
+                      v
+              +-------------------+
+              |   GitHub Actions  |
+              |    CI Pipeline    |
+              +-------------------+
+                      |
+          +-----------+------------+----------------+
+          |           |            |                |
+          v           v            v                v
+      Filesystem   Docker Image  Terraform       Kubernetes
+        Scan          Scan      Config Scan      Config Scan
+          |           |            |                |
+          +-----------+------------+----------------+
+                      |
+                      v
+              +-------------------+
+              |   Trivy Reports   |
+              | JSON / SARIF /    |
+              | CycloneDX SBOM    |
+              +-------------------+
+                      |
+                      v
+              +-------------------+
+              |   Security Gate   |
+              | Review findings   |
+              | Fix and rescan    |
+              +-------------------+
+```
+
+### Security workflow
+
+1. Developer pushes code to GitHub or creates a pull request.
+2. GitHub Actions starts the CI workflow.
+3. Trivy scans source files, dependencies, and secrets.
+4. Trivy checks Terraform and Kubernetes configurations.
+5. Docker builds the sample application image.
+6. Trivy scans the image for known vulnerabilities.
+7. Trivy generates reports and an SBOM.
+8. The pipeline can stop when HIGH or CRITICAL image vulnerabilities are found.
+9. The developer reviews findings, fixes the underlying issue, and scans again.
+
+## 🧰 3. Tools and Technologies
+
+| Tool | Purpose |
+|---|---|
+| Ubuntu Linux / AWS EC2 | Project execution environment |
+| Docker | Build the sample container image |
+| Trivy | Vulnerability, secret, and misconfiguration scanning |
+| Git | Version control |
+| GitHub | Source code repository |
+| GitHub Actions | Automated CI security pipeline |
+| Terraform | Infrastructure-as-Code scan example |
+| Kubernetes YAML | Kubernetes configuration scan example |
+| CycloneDX | SBOM output format |
+| SARIF | Static-analysis result format |
+
+## 📂 4. Project Folder Structure
+
+```text
+trivy-devsecops-project/
+│
+├── .github/
+│   └── workflows/
+│       └── trivy-security.yml       # GitHub Actions CI security pipeline
+│
+├── app/
+│   ├── app.py                       # Small sample Python application
+│   └── requirements.txt             # Python dependencies
+│
+├── docker/
+│   └── Dockerfile                   # Docker image build instructions
+│
+├── examples/
+│   └── insecure/
+│       ├── terraform/
+│       │   └── main.tf              # Intentionally insecure Terraform example
+│       └── kubernetes/
+│           └── deployment.yaml      # Intentionally insecure Kubernetes example
+│
+├── reports/
+│   └── .gitkeep                     # Generated reports are kept out of Git
+│
+├── scripts/
+│   ├── scan-filesystem.sh           # Scan files and dependencies
+│   ├── scan-iac.sh                  # Scan Terraform and Kubernetes configs
+│   ├── scan-image.sh                # Build and scan Docker image
+│   ├── generate-sbom.sh             # Generate CycloneDX SBOM
+│   └── run-all-scans.sh             # Run the complete local lab
+│
+├── .gitignore                       # Ignore generated reports and secrets
+└── README.md                        # Project documentation
+```
+
+## ⚙️ 5. Prerequisites
+
+Before starting, make sure you have:
+
+- Ubuntu 22.04/24.04 (or another supported Linux distribution).
+- An AWS EC2 instance if you want to run the lab in AWS.
+- A GitHub account and a new repository.
+- An internet connection to download packages and Trivy vulnerability databases.
+- Basic knowledge of Linux commands and Docker.
+
+### Recommended EC2 setup
+
+A small general-purpose EC2 instance is sufficient for this lightweight sample application and scans. Image scanning can use additional memory and disk depending on the image and vulnerability database.
+
+**Security Group:** No inbound application port is required for this command-line lab. SSH (TCP 22) should be restricted to your trusted IP. Do not open port 8080 unless you separately choose to run and access the sample web application.
+
+## 📥 6. Install Required Tools on Ubuntu EC2
+
+### Step 1: Update the system and install utilities
+
+```bash
+sudo apt-get update
+sudo apt-get install -y curl wget git ca-certificates gnupg lsb-release
+```
+
+### Step 2: Install Docker
+
+```bash
+sudo apt-get install -y docker.io
+
+# Start Docker now and enable it after reboot
+sudo systemctl enable --now docker
+
+# Allow the current user to run Docker commands
+sudo usermod -aG docker "$USER"
+```
+
+**Important:** Log out and reconnect to EC2 so the new Docker group membership is applied. Then verify:
+
+```bash
+docker --version
+docker ps
+```
+
+If you do not want to reconnect immediately, use `sudo docker` for Docker commands in the current session.
+
+### Step 3: Install Trivy
+
+Add the official Aqua Security Trivy APT repository:
+
+```bash
+sudo apt-get install -y wget apt-transport-https gnupg
+
+wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+  | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+  | sudo tee /etc/apt/sources.list.d/trivy.list
+
+sudo apt-get update
+sudo apt-get install -y trivy
+```
+
+### Step 4: Verify installations
+
+```bash
+docker --version
+trivy --version
+git --version
+```
+
+Official installation guide: https://trivy.dev/latest/getting-started/installation/
+
+## 🚀 7. Download and Run the Project
+
+Clone your GitHub repository after you push the project, or upload/extract the project folder on EC2.
+
+```bash
+git clone https://github.com/YOUR_GITHUB_USERNAME/trivy-devsecops-project.git
+cd trivy-devsecops-project
+```
+
+Make the shell scripts executable:
+
+```bash
+chmod +x scripts/*.sh
+```
+
+Run the complete local lab:
+
+```bash
+./scripts/run-all-scans.sh
+```
+
+This script runs the following sequence:
+
+| Order | Script | Action |
+|---|---|---|
+| 1 | `scan-image.sh` | Builds and scans the sample Docker image |
+| 2 | `scan-filesystem.sh` | Scans the repository filesystem |
+| 3 | `scan-iac.sh` | Scans Terraform and Kubernetes examples |
+| 4 | `generate-sbom.sh` | Generates a CycloneDX SBOM |
+
+You can also run each script separately:
+
+```bash
+./scripts/scan-filesystem.sh
+./scripts/scan-iac.sh
+./scripts/scan-image.sh
+./scripts/generate-sbom.sh
+```
+
+## 🔍 8. Trivy Scanning Commands Explained
+
+### A. Docker image vulnerability scan
+
+```bash
+# Scan the Nginx image
+trivy image nginx:latest
+
+# Display only HIGH and CRITICAL vulnerabilities
+trivy image --severity HIGH,CRITICAL nginx:latest
+```
+
+Checks for known vulnerabilities in operating-system packages and application dependencies contained in the image.
+
+### B. Filesystem scan
+
+```bash
+# Scan the current repository for vulnerabilities and secrets
+trivy fs --scanners vuln,secret .
+```
+
+Checks supported dependency files and searches for exposed secrets such as credentials or tokens.
+
+### C. Terraform and Kubernetes misconfiguration scan
+
+```bash
+# Scan the training examples for infrastructure misconfigurations
+trivy config examples/insecure/
+```
+
+Examples of issues that may be detected include overly permissive network rules, insecure storage settings, privileged containers, and unsafe Kubernetes security settings. Exact findings depend on Trivy version and checks.
+
+### D. Generate a JSON report
+
+```bash
+mkdir -p reports
+
+trivy image \
+  --format json \
+  --output reports/image-report.json \
+  nginx:latest
+```
+
+JSON is useful when another tool or script needs to process scan results.
+
+### E. Generate a SARIF report
+
+```bash
+trivy fs \
+  --scanners vuln,secret \
+  --format sarif \
+  --output reports/fs-results.sarif \
+  .
+```
+
+SARIF is a standard format that compatible code-scanning platforms, including GitHub Code Scanning, can consume when repository features and permissions allow.
+
+### F. Generate an SBOM
+
+```bash
+trivy image \
+  --format cyclonedx \
+  --output reports/nginx-sbom.cdx.json \
+  nginx:latest
+```
+
+An SBOM (Software Bill of Materials) is an inventory of software components and dependencies included in an application or image.
+
+### G. Configure a security gate
+
+```bash
+trivy image \
+  --severity HIGH,CRITICAL \
+  --exit-code 1 \
+  nginx:latest
+```
+
+`--exit-code 1` makes Trivy return a non-zero exit status when findings match the configured severity filter. CI systems can use this status to fail a job.
+
+## 📊 9. Generated Reports
+
+After running the scripts, inspect the reports:
+
+```bash
+ls -lh reports/
+```
+
+Expected local report files:
+
+```text
+reports/
+├── filesystem-report.json
+├── iac-report.json
+├── image-report.json
+└── image-sbom.cdx.json
+```
+
+| Report | Description |
+|---|---|
+| `filesystem-report.json` | Filesystem vulnerability and secret scan output |
+| `iac-report.json` | Terraform and Kubernetes misconfiguration output |
+| `image-report.json` | Docker image vulnerability scan output |
+| `image-sbom.cdx.json` | CycloneDX software inventory |
+
+The generated reports are ignored by Git to avoid committing potentially sensitive or large scan output. The GitHub Actions workflow uploads its reports as downloadable workflow artifacts.
+
+## 🔄 10. GitHub Actions – Automated Trivy Scanning
+
+Workflow location:
+
+```text
+.github/workflows/trivy-security.yml
+```
+
+The workflow is triggered by:
+
+- Push to the `main` branch.
+- Pull request targeting `main`.
+- Manual execution using `workflow_dispatch`.
+
+### Pipeline stages
+
+| Stage | Operation |
+|---|---|
+| 1 | Checkout repository |
+| 2 | Scan filesystem for vulnerabilities and secrets |
+| 3 | Scan Terraform and Kubernetes configuration |
+| 4 | Build the sample Docker image |
+| 5 | Scan Docker image for HIGH and CRITICAL vulnerabilities |
+| 6 | Generate CycloneDX SBOM |
+| 7 | Upload SARIF to GitHub Code Scanning, where supported |
+| 8 | Upload reports as GitHub Actions artifacts |
+
+### View the workflow result
+
+1. Open your GitHub repository.
+2. Select the **Actions** tab.
+3. Open **Trivy DevSecOps Security Scan**.
+4. Select the latest workflow run.
+5. Review the job steps and their logs.
+6. Download `trivy-security-reports` from the workflow artifacts.
+7. If enabled for your repository, review alerts under **Security → Code scanning**.
+
+**Security gate behavior:** The sample workflow uses `exit-code: '1'` for HIGH/CRITICAL image findings, so that scan step can fail the job. The report upload steps use `if: always()` so reports can still be collected after a failed scan. Filesystem and IaC scans are configured to report findings without failing the pipeline; change their `exit-code` settings if you want stricter gates.
+
+The workflow uses action version tags for readability in this learning project. For production, pin third-party GitHub Actions to reviewed full commit SHAs and review permissions and updates.
+
+## ⬆️ 11. Push the Project to GitHub
+
+### Step 1: Create a repository
+
+On GitHub, create a new repository named:
+
+```text
+trivy-devsecops-project
+```
+
+For the simplest first push, do not initialize the remote repository with a README or license if you already have these files locally.
+
+### Step 2: Initialize Git and push
+
+Run these commands from the project root:
+
+```bash
+# Initialize Git
+git init
+
+# Stage all project files
+git add .
+
+# Commit the project
+git commit -m "Initial commit - Trivy DevSecOps project"
+
+# Rename the branch to main
+git branch -M main
+
+# Add your GitHub repository URL
+git remote add origin https://github.com/YOUR_GITHUB_USERNAME/trivy-devsecops-project.git
+
+# Push the code
+git push -u origin main
+```
+
+Replace `YOUR_GITHUB_USERNAME` with your GitHub username. Authenticate with GitHub using an approved method if prompted.
+
+No Docker Hub credentials are needed for this sample workflow because it builds and scans the image locally; it does not push the image to a registry.
+
+## 🧪 12. How to Fix and Verify Findings
+
+Trivy identifies and reports security issues; it does not automatically fix your application or infrastructure.
+
+Use this process:
+
+1. Run the relevant scan.
+2. Identify the finding ID (for example, CVE), severity, affected package or file, and suggested remediation.
+3. Check the upstream package/vendor advisory.
+4. Update the vulnerable dependency, base image, or configuration.
+5. Rebuild the Docker image if the image content changed.
+6. Run the same scan again.
+7. Confirm that the finding is resolved or document why it remains.
+
+Do not blindly suppress findings. Validate false positives and document accepted risks with an owner and review date.
+
+## 🖼️ 13. Screenshots to Add to Your GitHub README
+
+After running the project, capture your own terminal and GitHub screenshots and save them under a `screenshots/` directory.
+
+Recommended screenshots:
+
+| Screenshot | What to show |
+|---|---|
+| `trivy-version.png` | Installed Trivy version |
+| `image-scan.png` | Docker image vulnerability scan |
+| `filesystem-scan.png` | Filesystem scan results |
+| `iac-scan.png` | Terraform/Kubernetes findings |
+| `sbom.png` | Generated CycloneDX SBOM |
+| `github-actions.png` | GitHub Actions pipeline result |
+| `workflow-artifacts.png` | Downloadable scan reports |
+
+When you have added the screenshots, you can display them here using Markdown, for example:
+
+```md
+![Trivy image scan](screenshots/image-scan.png)
+```
+
+Use genuine output from your own execution rather than example screenshots.
+
+## 🎯 14. Future Enhancements
+
+After completing this project, extend it with:
+
+| Level | Enhancement |
+|---|---|
+| Beginner | Scan additional Docker images |
+| Intermediate | Add stricter filesystem and IaC security gates |
+| Intermediate | Publish and compare SBOM reports |
+| Advanced | Scan images stored in AWS ECR |
+| Advanced | Integrate Trivy into Jenkins pipelines |
+| Advanced | Scan a live Kubernetes cluster |
+| Advanced | Add image signing and provenance verification |
+| Advanced | Add deployment approval based on security results |
+
+## 🎤 15. DevSecOps Interview Questions
+
+**1. What is Trivy?**  
+Trivy is an open-source security scanner from Aqua Security. It can detect vulnerabilities, secrets, and misconfigurations in container images, filesystems, repositories, Kubernetes resources, and Infrastructure as Code.
+
+**2. Why is Trivy used in DevSecOps?**  
+It helps identify security issues early in the development lifecycle, before vulnerable application components or unsafe configurations reach production.
+
+**3. Does Trivy fix vulnerabilities automatically?**  
+No. Trivy reports findings. The engineering team must update packages, change configurations, rebuild, and scan again.
+
+**4. What is a CVE?**  
+CVE stands for Common Vulnerabilities and Exposures. It is a publicly catalogued identifier for a known cybersecurity vulnerability.
+
+**5. What is an SBOM?**  
+A Software Bill of Materials is an inventory of software components and dependencies included in an application or image.
+
+**6. What is SARIF?**  
+SARIF stands for Static Analysis Results Interchange Format. It is a standard format for exchanging static-analysis results and can be uploaded to compatible code-scanning platforms.
+
+**7. How can Trivy stop a CI/CD pipeline?**  
+Use a severity filter with `--exit-code 1`, or configure the corresponding action input. Trivy returns a non-zero exit status when matching findings are detected, allowing the CI job to fail.
+
+**8. What is the difference between image scan and config scan?**  
+An image scan examines packages and dependencies inside a container image. A config scan checks configuration files such as Terraform and Kubernetes manifests for misconfigurations.
+
+## 🔐 16. Production Best Practices
+
+- Never commit passwords, tokens, private keys, or real `.env` files.
+- Use least-privilege permissions for GitHub Actions.
+- Protect the default branch and require security checks before merging.
+- Keep Trivy and its vulnerability database updated.
+- Use supported and regularly updated base images.
+- Pin third-party GitHub Actions to reviewed commit SHAs in production.
+- Review HIGH and CRITICAL findings rather than ignoring them automatically.
+- Treat reports as potentially sensitive because they reveal package and infrastructure details.
+- Do not deploy the intentionally insecure training examples.
+
+## 📚 17. Official References
+
+- Trivy documentation: https://trivy.dev/
+- Trivy installation: https://trivy.dev/latest/getting-started/installation/
+- Trivy GitHub repository: https://github.com/aquasecurity/trivy
+- Trivy GitHub Action: https://github.com/aquasecurity/trivy-action
+- GitHub SARIF upload documentation: https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/integrate-with-existing-tools/upload-sarif-file
+
+---
+
+## ✅ Project Completion Checklist
+
+- [ ] Install Docker and Trivy.
+- [ ] Run the filesystem scan.
+- [ ] Run the Terraform and Kubernetes scan.
+- [ ] Build and scan the Docker image.
+- [ ] Generate the CycloneDX SBOM.
+- [ ] Review the JSON reports.
+- [ ] Push the project to GitHub.
+- [ ] Verify the GitHub Actions workflow.
+- [ ] Download and review workflow artifacts.
+- [ ] Add screenshots of your actual results.
+- [ ] Fix a finding and demonstrate a successful rescan.
+
+**Project outcome:** A practical DevSecOps security-scanning pipeline that demonstrates how Trivy can be integrated into local development and GitHub Actions CI/CD.
