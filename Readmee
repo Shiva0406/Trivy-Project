@@ -18,7 +18,7 @@ By completing this project, you will learn to:
 - Generate security reports in JSON and SARIF formats.
 - Generate a CycloneDX Software Bill of Materials (SBOM).
 - Automate security scans using GitHub Actions.
-- Configure a security gate that can fail a pipeline when serious vulnerabilities are detected.
+- Configure a security gate that can fail a  pipeline when serious vulnerabilities are detected.
 
 ## 🏗️ 2. Project Architecture
 
